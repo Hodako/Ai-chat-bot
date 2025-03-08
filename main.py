@@ -5,7 +5,7 @@ import json
 import time
 
 # Configuration
-TELEGRAM_BOT_TOKEN = "8146539981:AAFDbCokG_NcbXW0EPT31v8CVSJaBl-WWyw"   # Replace with your Telegram bot token
+TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"  # Replace with your Telegram bot token
 AI_API_KEY = "c149b1d61653460fbda905f47275a5a2"
 AI_API_URL = "https://api.aimlapi.com/v1/chat/completions"
 AI_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
@@ -17,7 +17,7 @@ LLAMA_MODEL = "llama-3.3-70b-versatile"
 
 # Gemini 2.0 Flash API configuration
 GEMINI_API_KEY = "AIzaSyDmx3XqFrM4lDNxMM0Zj9GINDU-RHMvPEM"
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta2/models/gemini-2.0-flash:generateContent"
 
 # Define available AI personas
 AI_PERSONAS = {
@@ -449,155 +449,161 @@ def handle_all_messages(message):
     provider_settings = AI_PROVIDERS.get(current_provider, AI_PROVIDERS["llama"])
     api_url = provider_settings["api_url"]
     api_key = provider_settings["api_key"]
-    model = provider_settings.get("model")
-    provider_name = provider_settings["name"]
-    
-    # Show typing indicator
-    bot.send_chat_action(message.chat.id, 'typing')
-    
-    # Show "thinking" message if enabled
-    thinking_msg = None
-    if show_thinking:
-        thinking_msg = bot.send_message(
-            message.chat.id,
-            f"<i>🧠 {provider_name} is thinking...</i>"
-            )
 
-    try:
-        # Prepare API request
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
+    # Get provider settings
+provider_settings = AI_PROVIDERS.get(current_provider, AI_PROVIDERS["llama"])
+api_url = provider_settings["api_url"]
+api_key = provider_settings["api_key"]
+model = provider_settings.get("model")
+provider_name = provider_settings["name"]
+
+# Show typing indicator
+bot.send_chat_action(message.chat.id, 'typing')
+
+# Show "thinking" message if enabled
+thinking_msg = None
+if show_thinking:
+    thinking_msg = bot.send_message(
+        message.chat.id,
+        f"<i>🧠 {provider_name} is thinking...</i>"
+    )
+
+try:
+    # Prepare API request
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    if current_provider == "gemini":
+        payload = {
+            "model": "gemini-2.0-flash",
+            "contents": [{
+                "parts": [{"text": user_message}]
+            }]
         }
-        
-        if current_provider == "gemini":
-            payload = {
-                "contents": [{
-                    "parts": [{"text": user_message}]
-                }]
-            }
-        else:
-            payload = {
-                "model": model,
-                "messages": user_data[user_id]["conversation_history"],
-                "temperature": temperature,
-                "max_tokens": max_tokens
-            }
-        
-        # Show request details if thinking is enabled
-        if show_thinking and thinking_msg:
-            # Format the API request to show to the user (exclude auth token)
-            safe_payload = payload.copy()
-            # Truncate message content for display
-            if current_provider != "gemini":
-                safe_payload["messages"] = [
-                    {
-                        "role": msg["role"],
-                        "content": msg["content"][:50] + ("..." if len(msg["content"]) > 50 else "")
-                    }
-                    for msg in safe_payload["messages"]
-                ]
-            request_info = f"<b>🔄 {provider_name} API Request:</b>\n<pre>{json.dumps(safe_payload, indent=2)}</pre>"
-            bot.edit_message_text(
-                request_info,
-                message.chat.id,
-                thinking_msg.message_id
-            )
-            time.sleep(1)  # Pause briefly to show the request
-        
-        # Make API request
-        start_time = time.time()
-        response = requests.post(api_url, headers=headers, json=payload)
-        response.raise_for_status()
-        response_time = time.time() - start_time
-        
-        # Extract AI response
-        response_data = response.json()
-        
-        if current_provider == "gemini":
-            ai_message = response_data.get("contents", [{}])[0].get("parts", [{}])[0].get("text", "")
-        else:
-            ai_message = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        
-        if not ai_message:
-            ai_message = "I apologize, but I couldn't generate a response. Please try again."
-        
-        # Add AI response to conversation history
-        user_data[user_id]["conversation_history"].append({
-            "role": "assistant",
-            "content": ai_message
-        })
-        
-        # Manage conversation history length to avoid token limits
-        if len(user_data[user_id]["conversation_history"]) > 10:
-            # Keep system message and last 9 messages
-            user_data[user_id]["conversation_history"] = [
-                user_data[user_id]["conversation_history"][0]
-            ] + user_data[user_id]["conversation_history"][-9:]
-        
-        # Show response metadata if thinking is enabled
-        if show_thinking and thinking_msg:
-            metadata = (
-                f"<b>✅ Response received from {provider_name} in {response_time:.2f}s</b>\n\n"
-                f"<b>Model:</b> {model}\n"
-                f"<b>Persona:</b> {current_persona.capitalize()}\n"
-                f"<b>Provider:</b> {provider_name}\n"
-                f"<b>Temperature:</b> {temperature}\n"
-                f"<b>Max Tokens:</b> {max_tokens}\n\n"
-                f"<i>Generating response...</i>"
-            )
-            bot.edit_message_text(
-                metadata,
-                message.chat.id,
-                thinking_msg.message_id
-            )
-            time.sleep(1)  # Brief pause for UI feedback
-        
-        # Create inline keyboard for quick actions
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("🔄 Regenerate", callback_data="regenerate"),
-            types.InlineKeyboardButton("📋 Menu", callback_data="show_menu")
-        )
-        
-        # Send the AI response with the quick action buttons
-        # Delete thinking message if it exists
-        if thinking_msg:
-            bot.delete_message(message.chat.id, thinking_msg.message_id)
-        
-        # Add persona and provider indicator to response
-        response_indicator = f"<i>{current_persona.capitalize()} AI - Powered by {provider_name}</i>\n\n"
-        formatted_response = response_indicator + ai_message
-        
-        bot.send_message(
+    else:
+        payload = {
+            "model": model,
+            "messages": user_data[user_id]["conversation_history"],
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+    
+    # Show request details if thinking is enabled
+    if show_thinking and thinking_msg:
+        # Format the API request to show to the user (exclude auth token)
+        safe_payload = payload.copy()
+        # Truncate message content for display
+        if current_provider != "gemini":
+            safe_payload["messages"] = [
+                {
+                    "role": msg["role"],
+                    "content": msg["content"][:50] + ("..." if len(msg["content"]) > 50 else "")
+                }
+                for msg in safe_payload["messages"]
+            ]
+        request_info = f"<b>🔄 {provider_name} API Request:</b>\n<pre>{json.dumps(safe_payload, indent=2)}</pre>"
+        bot.edit_message_text(
+            request_info,
             message.chat.id,
-            formatted_response,
-            reply_markup=markup
+            thinking_msg.message_id
         )
-        
-    except requests.exceptions.RequestException as e:
-        error_message = f"<b>❌ {provider_name} API Request Error</b>\n\n{str(e)[:200]}"
-        if thinking_msg:
-            bot.edit_message_text(
-                error_message,
-                message.chat.id,
-                thinking_msg.message_id
-            )
-        else:
-            bot.send_message(message.chat.id, error_message)
-        print(f"API request error: {e}")
-        
-    except Exception as e:
-        error_message = f"<b>❌ Unexpected Error</b>\n\n{str(e)[:200]}"
-        if thinking_msg:
-            bot.edit_message_text(
-                error_message,
-                message.chat.id,
-                thinking_msg.message_id
-            )
-        else:
-            bot.send_message(message.chat.id, error_message)
-        print(f"Unexpected error: {e}")
+        time.sleep(1)  # Pause briefly to show the request
+    
+    # Make API request
+    start_time = time.time()
+    response = requests.post(api_url, headers=headers, json=payload)
+    response.raise_for_status()
+    response_time = time.time() - start_time
+    
+    # Extract AI response
+    response_data = response.json()
+    
+    if current_provider == "gemini":
+        ai_message = response_data.get("contents", [{}])[0].get("parts", [{}])[0].get("text", "")
+    else:
+        ai_message = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    
+    if not ai_message:
+        ai_message = "I apologize, but I couldn't generate a response. Please try again."
+    
+    # Add AI response to conversation history
+    user_data[user_id]["conversation_history"].append({
+        "role": "assistant",
+        "content": ai_message
+    })
+    
+    # Manage conversation history length to avoid token limits
+    if len(user_data[user_id]["conversation_history"]) > 10:
+        # Keep system message and last 9 messages
+        user_data[user_id]["conversation_history"] = [
+            user_data[user_id]["conversation_history"][0]
+        ] + user_data[user_id]["conversation_history"][-9:]
+    
+    # Show response metadata if thinking is enabled
+    if show_thinking and thinking_msg:
+        metadata = (
+            f"<b>✅ Response received from {provider_name} in {response_time:.2f}s</b>\n\n"
+            f"<b>Model:</b> {model}\n"
+            f"<b>Persona:</b> {current_persona.capitalize()}\n"
+            f"<b>Provider:</b> {provider_name}\n"
+            f"<b>Temperature:</b> {temperature}\n"
+            f"<b>Max Tokens:</b> {max_tokens}\n\n"
+            f"<i>Generating response...</i>"
+        )
+        bot.edit_message_text(
+            metadata,
+            message.chat.id,
+            thinking_msg.message_id
+        )
+        time.sleep(1)  # Brief pause for UI feedback
+    
+    # Create inline keyboard for quick actions
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("🔄 Regenerate", callback_data="regenerate"),
+        types.InlineKeyboardButton("📋 Menu", callback_data="show_menu")
+    )
+    
+    # Send the AI response with the quick action buttons
+    # Delete thinking message if it exists
+    if thinking_msg:
+        bot.delete_message(message.chat.id, thinking_msg.message_id)
+    
+    # Add persona and provider indicator to response
+    response_indicator = f"<i>{current_persona.capitalize()} AI - Powered by {provider_name}</i>\n\n"
+    formatted_response = response_indicator + ai_message
+    
+    bot.send_message(
+        message.chat.id,
+        formatted_response,
+        reply_markup=markup
+    )
+    
+except requests.exceptions.RequestException as e:
+    error_message = f"<b>❌ {provider_name} API Request Error</b>\n\n{str(e)[:200]}"
+    if thinking_msg:
+        bot.edit_message_text(
+            error_message,
+            message.chat.id,
+            thinking_msg.message_id
+        )
+    else:
+        bot.send_message(message.chat.id, error_message)
+    print(f"API request error: {e}")
+    
+except Exception as e:
+    error_message = f"<b>❌ Unexpected Error</b>\n\n{str(e)[:200]}"
+    if thinking_msg:
+        bot.edit_message_text(
+            error_message,
+            message.chat.id,
+            thinking_msg.message_id
+        )
+    else:
+        bot.send_message(message.chat.id, error_message)
+    print(f"Unexpected error: {e}")
 
 # Handle the 'regenerate' callback - regenerate the last AI response
 @bot.callback_query_handler(func=lambda call: call.data == "regenerate")
@@ -650,6 +656,7 @@ def handle_regenerate(call):
         
         if current_provider == "gemini":
             payload = {
+                "model": "gemini-2.0-flash",
                 "contents": [{
                     "parts": [{"text": user_data[user_id]["conversation_history"][-1]["content"]}]
                 }]
@@ -726,4 +733,3 @@ def handle_show_menu(call):
 if __name__ == "__main__":
     print("Enhanced AI Bot with GPT, Llama, and Gemini support is running...")
     bot.polling(none_stop=True)
-            
