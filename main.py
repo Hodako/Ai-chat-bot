@@ -63,41 +63,99 @@ AI_PROVIDERS = {
     }
 }
 
-# Rate limiting configuration
-CALLS = 60
-RATE_LIMIT = 60
-
-@sleep_and_retry
-@limits(calls=CALLS, period=RATE_LIMIT)
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def make_api_request(url, headers, payload):
-    """Make a rate-limited request to AI APIs with retries"""
-    response = requests.post(url, headers=headers, json=payload)
-    response.raise_for_status()
-    return response
-
-# Custom request handler for the HTTP server
-class RequestHandler(http.server.SimpleHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(b"AI Bot is running")
-
-def run_http_server():
-    """Run HTTP server on port 8765"""
-    with socketserver.TCPServer(("", 8765), RequestHandler) as httpd:
-        logger.info("Server running on port 8765")
-        httpd.serve_forever()
-
 # Initialize the bot with parse_mode set to HTML
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode="HTML")
 
 # Dictionary to store conversation history and settings for each user
 user_data = {}
 
-# [Previous helper functions remain the same]
-# ... (include all the helper functions from the original code)
+def initialize_user(user_id, persona="travel", provider="llama"):
+    """Initialize user data with default settings"""
+    logger.info(f"Initializing user data for user_id: {user_id}")
+    user_data[user_id] = {
+        "conversation_history": [
+            {
+                "role": "system",
+                "content": AI_PERSONAS[persona]
+            }
+        ],
+        "current_persona": persona,
+        "current_provider": provider,
+        "temperature": 0.7,
+        "max_tokens": 256,
+        "show_thinking": False
+    }
+    return user_data[user_id]
+
+def get_main_menu():
+    """Create the main menu keyboard"""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("💬 Change AI Persona", callback_data="change_persona"),
+        types.InlineKeyboardButton("🔄 Change AI Provider", callback_data="change_provider"),
+        types.InlineKeyboardButton("⚙️ Settings", callback_data="settings"),
+        types.InlineKeyboardButton("📜 View History", callback_data="view_history"),
+        types.InlineKeyboardButton("❓ Help", callback_data="help")
+    )
+    return markup
+
+def get_persona_menu():
+    """Create the persona selection keyboard"""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for key in AI_PERSONAS:
+        persona_name = key.capitalize()
+        markup.add(types.InlineKeyboardButton(f"🤖 {persona_name}", callback_data=f"persona_{key}"))
+    markup.add(types.InlineKeyboardButton("◀️ Back", callback_data="back_to_main"))
+    return markup
+
+def get_provider_menu(user_id):
+    """Create the AI provider selection keyboard"""
+    user = user_data.get(user_id, {})
+    current_provider = user.get("current_provider", "llama")
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for key, value in AI_PROVIDERS.items():
+        provider_name = value["name"]
+        selected = "✅ " if key == current_provider else ""
+        markup.add(types.InlineKeyboardButton(f"{selected}{provider_name}", callback_data=f"provider_{key}"))
+    markup.add(types.InlineKeyboardButton("◀️ Back", callback_data="back_to_main"))
+    return markup
+
+@bot.message_handler(commands=['start'])
+def start_command(message):
+    """Handle the /start command"""
+    user_id = message.from_user.id
+    initialize_user(user_id)
+    
+    welcome_text = (
+        "<b>👋 Welcome to AI Assistant!</b>\n\n"
+        "I'm your personal AI assistant powered by advanced language models. "
+        "I can help you with various tasks based on my current persona.\n\n"
+        "<i>Currently set as: Travel Agent with Llama AI</i>\n\n"
+        "Use the menu below to change settings or get help:"
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        welcome_text,
+        reply_markup=get_main_menu()
+    )
+
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    """Handle the /help command"""
+    help_text = (
+        "<b>📚 Help & Commands</b>\n\n"
+        "<b>Available Commands:</b>\n"
+        "• /start - Initialize or restart the bot\n"
+        "• /help - Show this help message\n"
+        "• /menu - Show the main menu\n"
+        "• /provider - Change AI provider\n"
+        "• /persona - Change AI persona\n\n"
+        "<b>How to Use:</b>\n"
+        "Simply type a message to chat with the AI assistant."
+    )
+    bot.send_message(message.chat.id, help_text, reply_markup=get_main_menu())
 
 @bot.message_handler(func=lambda message: True)
 def handle_all_messages(message):
@@ -129,20 +187,10 @@ def handle_all_messages(message):
         
         # Prepare payload based on provider
         if current_provider == "gemini":
-            # Prepare conversation context for Gemini
-            conversation_text = ""
-            for msg in settings["conversation_history"]:
-                if msg["role"] == "system":
-                    conversation_text += f"Instructions: {msg['content']}\n"
-                elif msg["role"] == "user":
-                    conversation_text += f"User: {msg['content']}\n"
-                elif msg["role"] == "assistant":
-                    conversation_text += f"Assistant: {msg['content']}\n"
-            
             payload = {
                 "contents": [{
                     "parts": [{
-                        "text": conversation_text + f"User: {user_message}"
+                        "text": user_message
                     }]
                 }],
                 "generationConfig": {
@@ -159,7 +207,8 @@ def handle_all_messages(message):
             }
         
         # Make API request
-        response = make_api_request(api_url, headers, payload)
+        response = requests.post(api_url, headers=headers, json=payload)
+        response.raise_for_status()
         response_data = response.json()
         
         # Extract response based on provider
@@ -176,10 +225,6 @@ def handle_all_messages(message):
         settings["conversation_history"].append({"role": "user", "content": user_message})
         settings["conversation_history"].append({"role": "assistant", "content": ai_message})
         
-        # Manage history length
-        if len(settings["conversation_history"]) > 10:
-            settings["conversation_history"] = [settings["conversation_history"][0]] + settings["conversation_history"][-9:]
-        
         # Send response
         bot.reply_to(
             message,
@@ -190,8 +235,19 @@ def handle_all_messages(message):
         logger.error(f"Error processing message: {str(e)}")
         bot.reply_to(message, f"<b>❌ Error</b>\n\n{str(e)[:200]}")
 
-# [Previous command handlers and callback handlers remain the same]
-# ... (include all the command handlers and callback handlers from the original code)
+# Custom request handler for the HTTP server
+class RequestHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b"AI Bot is running")
+
+def run_http_server():
+    """Run HTTP server on port 8765"""
+    with socketserver.TCPServer(("", 8765), RequestHandler) as httpd:
+        logger.info("Server running on port 8765")
+        httpd.serve_forever()
 
 def main():
     """Main function to run the bot"""
