@@ -15,6 +15,10 @@ LLAMA_API_KEY = "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"
 LLAMA_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 LLAMA_MODEL = "llama-3.3-70b-versatile"
 
+# Gemini 2.0 Flash API configuration
+GEMINI_API_KEY = "AIzaSyDmx3XqFrM4lDNxMM0Zj9GINDU-RHMvPEM"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
 # Define available AI personas
 AI_PERSONAS = {
     "travel": "You are a travel agent. Be descriptive and helpful with travel recommendations.",
@@ -37,6 +41,11 @@ AI_PROVIDERS = {
         "api_url": LLAMA_API_URL,
         "api_key": LLAMA_API_KEY,
         "model": LLAMA_MODEL
+    },
+    "gemini": {
+        "name": "Gemini",
+        "api_url": GEMINI_API_URL,
+        "api_key": GEMINI_API_KEY
     }
 }
 
@@ -163,7 +172,7 @@ def help_command(message):
         "• /help - Show this help message\n"
         "• /reset - Clear your conversation history\n"
         "• /menu - Show the main menu\n"
-        "• /provider - Change AI provider (GPT or Llama)\n"
+        "• /provider - Change AI provider (GPT, Llama, or Gemini)\n"
         "• /persona - Change AI persona\n\n"
         "<b>How to Use:</b>\n"
         "Simply type a message to chat with the AI assistant. Your conversation "
@@ -270,7 +279,7 @@ def handle_callback_queries(call):
             "• /help - Show this help message\n"
             "• /reset - Clear your conversation history\n"
             "• /menu - Show the main menu\n"
-            "• /provider - Change AI provider (GPT or Llama)\n"
+            "• /provider - Change AI provider (GPT, Llama, or Gemini)\n"
             "• /persona - Change AI persona\n\n"
             "<b>How to Use:</b>\n"
             "Simply type a message to chat with the AI assistant. Your conversation "
@@ -440,7 +449,7 @@ def handle_all_messages(message):
     provider_settings = AI_PROVIDERS.get(current_provider, AI_PROVIDERS["llama"])
     api_url = provider_settings["api_url"]
     api_key = provider_settings["api_key"]
-    model = provider_settings["model"]
+    model = provider_settings.get("model")
     provider_name = provider_settings["name"]
     
     # Show typing indicator
@@ -452,8 +461,8 @@ def handle_all_messages(message):
         thinking_msg = bot.send_message(
             message.chat.id,
             f"<i>🧠 {provider_name} is thinking...</i>"
-        )
-    
+            )
+
     try:
         # Prepare API request
         headers = {
@@ -461,25 +470,33 @@ def handle_all_messages(message):
             "Authorization": f"Bearer {api_key}"
         }
         
-        payload = {
-            "model": model,
-            "messages": user_data[user_id]["conversation_history"],
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
+        if current_provider == "gemini":
+            payload = {
+                "contents": [{
+                    "parts": [{"text": user_message}]
+                }]
+            }
+        else:
+            payload = {
+                "model": model,
+                "messages": user_data[user_id]["conversation_history"],
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
         
         # Show request details if thinking is enabled
         if show_thinking and thinking_msg:
             # Format the API request to show to the user (exclude auth token)
             safe_payload = payload.copy()
             # Truncate message content for display
-            safe_payload["messages"] = [
-                {
-                    "role": msg["role"],
-                    "content": msg["content"][:50] + ("..." if len(msg["content"]) > 50 else "")
-                }
-                for msg in safe_payload["messages"]
-            ]
+            if current_provider != "gemini":
+                safe_payload["messages"] = [
+                    {
+                        "role": msg["role"],
+                        "content": msg["content"][:50] + ("..." if len(msg["content"]) > 50 else "")
+                    }
+                    for msg in safe_payload["messages"]
+                ]
             request_info = f"<b>🔄 {provider_name} API Request:</b>\n<pre>{json.dumps(safe_payload, indent=2)}</pre>"
             bot.edit_message_text(
                 request_info,
@@ -496,7 +513,11 @@ def handle_all_messages(message):
         
         # Extract AI response
         response_data = response.json()
-        ai_message = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        
+        if current_provider == "gemini":
+            ai_message = response_data.get("contents", [{}])[0].get("parts", [{}])[0].get("text", "")
+        else:
+            ai_message = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
         
         if not ai_message:
             ai_message = "I apologize, but I couldn't generate a response. Please try again."
@@ -619,7 +640,7 @@ def handle_regenerate(call):
         # Get provider settings
         api_url = provider_settings["api_url"]
         api_key = provider_settings["api_key"]
-        model = provider_settings["model"]
+        model = provider_settings.get("model")
         
         # Prepare API request
         headers = {
@@ -627,12 +648,19 @@ def handle_regenerate(call):
             "Authorization": f"Bearer {api_key}"
         }
         
-        payload = {
-            "model": model,
-            "messages": user_data[user_id]["conversation_history"],
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
+        if current_provider == "gemini":
+            payload = {
+                "contents": [{
+                    "parts": [{"text": user_data[user_id]["conversation_history"][-1]["content"]}]
+                }]
+            }
+        else:
+            payload = {
+                "model": model,
+                "messages": user_data[user_id]["conversation_history"],
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
         
         # Make API request
         response = requests.post(api_url, headers=headers, json=payload)
@@ -640,7 +668,11 @@ def handle_regenerate(call):
         
         # Extract AI response
         response_data = response.json()
-        ai_message = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        
+        if current_provider == "gemini":
+            ai_message = response_data.get("contents", [{}])[0].get("parts", [{}])[0].get("text", "")
+        else:
+            ai_message = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
         
         if not ai_message:
             ai_message = "I apologize, but I couldn't generate a response. Please try again."
@@ -692,5 +724,6 @@ def handle_show_menu(call):
 
 # Start the bot
 if __name__ == "__main__":
-    print("Enhanced AI Bot with GPT and Llama support is running...")
+    print("Enhanced AI Bot with GPT, Llama, and Gemini support is running...")
     bot.polling(none_stop=True)
+            
