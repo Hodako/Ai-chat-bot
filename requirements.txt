@@ -3,6 +3,5 @@ requests
 python-dotenv
 ratelimit
 tenacity
-socketserver
 pytz
 json5
