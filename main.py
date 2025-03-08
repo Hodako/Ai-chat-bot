@@ -351,7 +351,7 @@ def handle_all_messages(message):
         
         # Format response
         response_text = (
-            f"<i>{settings['current_persona'].capitalize()}AI - Powered by {provider_settings['name']}</i>\n"
+            f"<i>{settings['current_persona'].capitalize()} AI - Powered by {provider_settings['name']}</i>\n"
             f"Time: {get_current_time()}\n\n"
             f"{ai_message}"
         )
