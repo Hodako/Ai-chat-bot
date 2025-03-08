@@ -6,3 +6,4 @@ tenacity
 pytz
 json5
 logging
+gunicorn
