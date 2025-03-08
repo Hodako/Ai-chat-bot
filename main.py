@@ -1,4 +1,4 @@
-import requests
+ import requests
 import telebot
 from telebot import types
 import json
@@ -10,6 +10,11 @@ AI_API_KEY = "c149b1d61653460fbda905f47275a5a2"
 AI_API_URL = "https://api.aimlapi.com/v1/chat/completions"
 AI_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
 
+# Llama API configuration
+LLAMA_API_KEY = "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"
+LLAMA_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+LLAMA_MODEL = "llama-3.3-70b-versatile"
+
 # Define available AI personas
 AI_PERSONAS = {
     "travel": "You are a travel agent. Be descriptive and helpful with travel recommendations.",
@@ -19,6 +24,22 @@ AI_PERSONAS = {
     "writer": "You are a writing assistant. Help improve writing with thoughtful suggestions and edits."
 }
 
+# Define available AI providers
+AI_PROVIDERS = {
+    "gpt": {
+        "name": "GPT",
+        "api_url": AI_API_URL,
+        "api_key": AI_API_KEY,
+        "model": AI_MODEL
+    },
+    "llama": {
+        "name": "Llama",
+        "api_url": LLAMA_API_URL,
+        "api_key": LLAMA_API_KEY,
+        "model": LLAMA_MODEL
+    }
+}
+
 # Initialize the bot with parse_mode set to HTML
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode="HTML")
 
@@ -26,7 +47,7 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode="HTML")
 user_data = {}
 
 # Helper function to initialize user data
-def initialize_user(user_id, persona="travel"):
+def initialize_user(user_id, persona="travel", provider="llama"):
     user_data[user_id] = {
         "conversation_history": [
             {
@@ -35,6 +56,7 @@ def initialize_user(user_id, persona="travel"):
             }
         ],
         "current_persona": persona,
+        "current_provider": provider,
         "temperature": 0.7,
         "max_tokens": 256,
         "show_thinking": False
@@ -45,6 +67,7 @@ def get_main_menu():
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("💬 Change AI Persona", callback_data="change_persona"),
+        types.InlineKeyboardButton("🔄 Change AI Provider", callback_data="change_provider"),
         types.InlineKeyboardButton("⚙️ Settings", callback_data="settings"),
         types.InlineKeyboardButton("📝 View History", callback_data="view_history"),
         types.InlineKeyboardButton("❓ Help", callback_data="help")
@@ -57,6 +80,19 @@ def get_persona_menu():
     for key, value in AI_PERSONAS.items():
         persona_name = key.capitalize()
         markup.add(types.InlineKeyboardButton(f"🤖 {persona_name}", callback_data=f"persona_{key}"))
+    markup.add(types.InlineKeyboardButton("◀️ Back", callback_data="back_to_main"))
+    return markup
+
+# Helper function to create the AI provider selection keyboard
+def get_provider_menu(user_id):
+    user = user_data.get(user_id, {})
+    current_provider = user.get("current_provider", "llama")
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for key, value in AI_PROVIDERS.items():
+        provider_name = value["name"]
+        selected = "✅ " if key == current_provider else ""
+        markup.add(types.InlineKeyboardButton(f"{selected}{provider_name}", callback_data=f"provider_{key}"))
     markup.add(types.InlineKeyboardButton("◀️ Back", callback_data="back_to_main"))
     return markup
 
@@ -107,7 +143,7 @@ def start_command(message):
         "<b>👋 Welcome to AI Assistant!</b>\n\n"
         "I'm your personal AI assistant powered by advanced language models. "
         "I can help you with various tasks based on my current persona.\n\n"
-        "<i>Currently set as: Travel Agent</i>\n\n"
+        "<i>Currently set as: Travel Agent with Llama AI</i>\n\n"
         "Use the menu below to change settings or get help:"
     )
     
@@ -126,12 +162,14 @@ def help_command(message):
         "• /start - Initialize or restart the bot\n"
         "• /help - Show this help message\n"
         "• /reset - Clear your conversation history\n"
-        "• /menu - Show the main menu\n\n"
+        "• /menu - Show the main menu\n"
+        "• /provider - Change AI provider (GPT or Llama)\n"
+        "• /persona - Change AI persona\n\n"
         "<b>How to Use:</b>\n"
         "Simply type a message to chat with the AI assistant. Your conversation "
         "history is maintained to provide contextual responses.\n\n"
         "<b>Change Settings:</b>\n"
-        "Use the menu buttons to change the AI persona, adjust response settings, "
+        "Use the menu buttons to change the AI persona, AI provider, adjust response settings, "
         "or view your conversation history."
     )
     bot.send_message(message.chat.id, help_text, reply_markup=get_main_menu())
@@ -141,13 +179,15 @@ def reset_command(message):
     """Handle the /reset command"""
     user_id = message.from_user.id
     
-    # Get current persona before reset
+    # Get current persona and provider before reset
     current_persona = "travel"
+    current_provider = "llama"
     if user_id in user_data:
         current_persona = user_data[user_id].get("current_persona", "travel")
+        current_provider = user_data[user_id].get("current_provider", "llama")
     
     # Reinitialize user data
-    initialize_user(user_id, current_persona)
+    initialize_user(user_id, current_persona, current_provider)
     
     bot.send_message(
         message.chat.id,
@@ -162,6 +202,30 @@ def menu_command(message):
         message.chat.id,
         "<b>📋 Main Menu</b>\n\nSelect an option:",
         reply_markup=get_main_menu()
+    )
+
+@bot.message_handler(commands=['provider'])
+def provider_command(message):
+    """Handle the /provider command"""
+    user_id = message.from_user.id
+    
+    # Initialize user data if not exists
+    if user_id not in user_data:
+        initialize_user(user_id)
+    
+    bot.send_message(
+        message.chat.id,
+        "<b>🔄 Select AI Provider</b>\n\nChoose the AI provider you want to use:",
+        reply_markup=get_provider_menu(user_id)
+    )
+
+@bot.message_handler(commands=['persona'])
+def persona_command(message):
+    """Handle the /persona command"""
+    bot.send_message(
+        message.chat.id,
+        "<b>🤖 Select AI Persona</b>\n\nChoose the role you want the AI to assume:",
+        reply_markup=get_persona_menu()
     )
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -182,6 +246,14 @@ def handle_callback_queries(call):
             reply_markup=get_persona_menu()
         )
     
+    elif call.data == "change_provider":
+        bot.edit_message_text(
+            "<b>🔄 Select AI Provider</b>\n\nChoose the AI provider you want to use:",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=get_provider_menu(user_id)
+        )
+    
     elif call.data == "settings":
         bot.edit_message_text(
             "<b>⚙️ Settings</b>\n\nAdjust how the AI responds to your messages:",
@@ -197,7 +269,9 @@ def handle_callback_queries(call):
             "• /start - Initialize or restart the bot\n"
             "• /help - Show this help message\n"
             "• /reset - Clear your conversation history\n"
-            "• /menu - Show the main menu\n\n"
+            "• /menu - Show the main menu\n"
+            "• /provider - Change AI provider (GPT or Llama)\n"
+            "• /persona - Change AI persona\n\n"
             "<b>How to Use:</b>\n"
             "Simply type a message to chat with the AI assistant. Your conversation "
             "history is maintained to provide contextual responses."
@@ -244,6 +318,28 @@ def handle_callback_queries(call):
         
         bot.edit_message_text(
             f"<b>✅ Persona Updated</b>\n\nNow chatting with <b>{persona.capitalize()} AI</b>. Your conversation history has been reset with this new persona.",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=get_main_menu()
+        )
+    
+    # Provider selection handling
+    elif call.data.startswith("provider_"):
+        provider = call.data.split("_")[1]
+        user_data[user_id]["current_provider"] = provider
+        
+        # Reset conversation history with current persona but new provider
+        current_persona = user_data[user_id].get("current_persona", "travel")
+        user_data[user_id]["conversation_history"] = [
+            {
+                "role": "system",
+                "content": AI_PERSONAS[current_persona]
+            }
+        ]
+        
+        provider_name = AI_PROVIDERS[provider]["name"]
+        bot.edit_message_text(
+            f"<b>✅ AI Provider Updated</b>\n\nNow using <b>{provider_name}</b>. Your conversation history has been reset.",
             call.message.chat.id,
             call.message.message_id,
             reply_markup=get_main_menu()
@@ -338,6 +434,14 @@ def handle_all_messages(message):
     max_tokens = user_data[user_id].get("max_tokens", 256)
     show_thinking = user_data[user_id].get("show_thinking", False)
     current_persona = user_data[user_id].get("current_persona", "travel")
+    current_provider = user_data[user_id].get("current_provider", "llama")
+    
+    # Get provider settings
+    provider_settings = AI_PROVIDERS.get(current_provider, AI_PROVIDERS["llama"])
+    api_url = provider_settings["api_url"]
+    api_key = provider_settings["api_key"]
+    model = provider_settings["model"]
+    provider_name = provider_settings["name"]
     
     # Show typing indicator
     bot.send_chat_action(message.chat.id, 'typing')
@@ -347,18 +451,18 @@ def handle_all_messages(message):
     if show_thinking:
         thinking_msg = bot.send_message(
             message.chat.id,
-            "<i>🧠 Thinking...</i>"
+            f"<i>🧠 {provider_name} is thinking...</i>"
         )
     
     try:
         # Prepare API request
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {AI_API_KEY}"
+            "Authorization": f"Bearer {api_key}"
         }
         
         payload = {
-            "model": AI_MODEL,
+            "model": model,
             "messages": user_data[user_id]["conversation_history"],
             "temperature": temperature,
             "max_tokens": max_tokens
@@ -376,7 +480,7 @@ def handle_all_messages(message):
                 }
                 for msg in safe_payload["messages"]
             ]
-            request_info = f"<b>🔄 API Request:</b>\n<pre>{json.dumps(safe_payload, indent=2)}</pre>"
+            request_info = f"<b>🔄 {provider_name} API Request:</b>\n<pre>{json.dumps(safe_payload, indent=2)}</pre>"
             bot.edit_message_text(
                 request_info,
                 message.chat.id,
@@ -386,7 +490,7 @@ def handle_all_messages(message):
         
         # Make API request
         start_time = time.time()
-        response = requests.post(AI_API_URL, headers=headers, json=payload)
+        response = requests.post(api_url, headers=headers, json=payload)
         response.raise_for_status()
         response_time = time.time() - start_time
         
@@ -413,9 +517,10 @@ def handle_all_messages(message):
         # Show response metadata if thinking is enabled
         if show_thinking and thinking_msg:
             metadata = (
-                f"<b>✅ Response received in {response_time:.2f}s</b>\n\n"
-                f"<b>Model:</b> {AI_MODEL}\n"
+                f"<b>✅ Response received from {provider_name} in {response_time:.2f}s</b>\n\n"
+                f"<b>Model:</b> {model}\n"
                 f"<b>Persona:</b> {current_persona.capitalize()}\n"
+                f"<b>Provider:</b> {provider_name}\n"
                 f"<b>Temperature:</b> {temperature}\n"
                 f"<b>Max Tokens:</b> {max_tokens}\n\n"
                 f"<i>Generating response...</i>"
@@ -439,9 +544,9 @@ def handle_all_messages(message):
         if thinking_msg:
             bot.delete_message(message.chat.id, thinking_msg.message_id)
         
-        # Add persona indicator to response
-        persona_indicator = f"<i>{current_persona.capitalize()} AI</i>\n\n"
-        formatted_response = persona_indicator + ai_message
+        # Add persona and provider indicator to response
+        response_indicator = f"<i>{current_persona.capitalize()} AI - Powered by {provider_name}</i>\n\n"
+        formatted_response = response_indicator + ai_message
         
         bot.send_message(
             message.chat.id,
@@ -450,7 +555,7 @@ def handle_all_messages(message):
         )
         
     except requests.exceptions.RequestException as e:
-        error_message = f"<b>❌ API Request Error</b>\n\n{str(e)[:200]}"
+        error_message = f"<b>❌ {provider_name} API Request Error</b>\n\n{str(e)[:200]}"
         if thinking_msg:
             bot.edit_message_text(
                 error_message,
@@ -492,9 +597,14 @@ def handle_regenerate(call):
         bot.answer_callback_query(call.id, "Cannot regenerate at this point.")
         return
     
+    # Get current provider
+    current_provider = user_data[user_id].get("current_provider", "llama")
+    provider_settings = AI_PROVIDERS.get(current_provider, AI_PROVIDERS["llama"])
+    provider_name = provider_settings["name"]
+    
     # Show regenerating message
     bot.edit_message_text(
-        "<i>🔄 Regenerating response...</i>",
+        f"<i>🔄 Regenerating response with {provider_name}...</i>",
         call.message.chat.id,
         call.message.message_id
     )
@@ -506,21 +616,26 @@ def handle_regenerate(call):
         max_tokens = user_data[user_id].get("max_tokens", 256)
         current_persona = user_data[user_id].get("current_persona", "travel")
         
+        # Get provider settings
+        api_url = provider_settings["api_url"]
+        api_key = provider_settings["api_key"]
+        model = provider_settings["model"]
+        
         # Prepare API request
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {AI_API_KEY}"
+            "Authorization": f"Bearer {api_key}"
         }
         
         payload = {
-            "model": AI_MODEL,
+            "model": model,
             "messages": user_data[user_id]["conversation_history"],
             "temperature": temperature,
             "max_tokens": max_tokens
         }
         
         # Make API request
-        response = requests.post(AI_API_URL, headers=headers, json=payload)
+        response = requests.post(api_url, headers=headers, json=payload)
         response.raise_for_status()
         
         # Extract AI response
@@ -543,9 +658,9 @@ def handle_regenerate(call):
             types.InlineKeyboardButton("📋 Menu", callback_data="show_menu")
         )
         
-        # Add persona indicator to response
-        persona_indicator = f"<i>{current_persona.capitalize()} AI</i>\n\n"
-        formatted_response = persona_indicator + ai_message
+        # Add persona and provider indicator to response
+        response_indicator = f"<i>{current_persona.capitalize()} AI - Powered by {provider_name}</i>\n\n"
+        formatted_response = response_indicator + ai_message
         
         # Send the regenerated response
         bot.edit_message_text(
@@ -577,5 +692,5 @@ def handle_show_menu(call):
 
 # Start the bot
 if __name__ == "__main__":
-    print("Enhanced AI Bot is running...")
+    print("Enhanced AI Bot with GPT and Llama support is running...")
     bot.polling(none_stop=True)
